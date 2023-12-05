@@ -1,112 +1,155 @@
-﻿using System;
+﻿using System.Text.RegularExpressions;
 using HtmlAgilityPack;
 using SneakerService;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 
 namespace ConsoleApp
 {
     class Program
     {
-        static void Main(string[] args)
+        private readonly ILogger<Program> _logger;
+
+        public Program(ILogger<Program> logger)
+        {
+            _logger = logger;
+        }
+        public void Run()
         {
             // Caminho para o arquivo HTML gerado pelo Python
-            string path = @"D:\Workspace\Web Scraping\html_nike2.html"; // Substitua pelo caminho do seu arquivo
-
-            // Carrega o arquivo HTML
-            HtmlDocument htmlDoc = new HtmlDocument();
-            htmlDoc.Load(path);
-
-            // XPath da div pai
-            string divPaiXPath = "//div[@data-testid='products-search-3']";
-
-            // Seleciona a div pai usando o XPath
-            HtmlNode divPaiNode = htmlDoc.DocumentNode.SelectSingleNode(divPaiXPath);
-
-            if (divPaiNode != null)
+            try
             {
-                // XPath para encontrar todas as divs filhas dentro da div pai
-                string divFilhaXPath = ".//div[contains(@class, 'ProductCard-styled__ProductContentContainer-sc')]";
+                _logger.LogWarning("Iniciando Sneaker Service");
+                Console.WriteLine("Iniciando teste");
 
-                // Seleciona todas as divs filhas usando o XPath
-                HtmlNodeCollection divsFilhas = divPaiNode.SelectNodes(divFilhaXPath);
+                string pasta = @"D:\Workspace\SneakerService\Pages";
+                string[] arquivos = Directory.GetFiles(pasta);
+                string mensagem = string.Empty;
 
-                if (divsFilhas != null)
+                if (arquivos.Length > 0 )
                 {
-                    // Percorre todas as divs filhas encontradas
-                    foreach (HtmlNode divFilha in divsFilhas)
+                    foreach(var arquivo in arquivos)
                     {
-                        string tagsPXPath = ".//p";
-                        string textoXPath = ".//p[contains(@class, 'Typography')]";
+                        string path = arquivo;
 
-                        string innerOutput = divFilha.InnerText;
-                        string[] linhas = innerOutput.Split(new[] {'\r', '\n'}, StringSplitOptions.RemoveEmptyEntries);
+                        // Carrega o arquivo HTML
+                        HtmlDocument htmlDoc = new HtmlDocument();
+                        htmlDoc.Load(path);
 
-                        SneakerDTO sneaker = new SneakerDTO();
-                        
-                        if(linhas.Length >= 5)
+                        // XPath da div pai
+                        string divPaiXPath = "//div[@data-testid='products-search-3']";
+
+                        // Seleciona a div pai usando o XPath
+                        HtmlNode divPaiNode = htmlDoc.DocumentNode.SelectSingleNode(divPaiXPath);
+
+                        if (divPaiNode != null)
                         {
-                            sneaker.Nome = linhas[1].Trim();
-                            sneaker.Tipo = linhas[4].Trim();
-                            sneaker.ValorAtual = linhas[8].Trim();
-                            sneaker.ValorAnterior = linhas[11].Trim();
-                            sneaker.Desconto = linhas.Length < 12 ? "Produto não possui desconto" : linhas[14].Trim();
+                            // XPath para encontrar todas as divs filhas dentro da div pai
+                            string divFilhaXPath = ".//div[contains(@class, 'ProductCard-styled__ProductContentContainer-sc')]";
 
-                            // Exibe os dados atribuídos ao objeto de teste
-                            Console.WriteLine("Nome: " + sneaker.Nome);
-                            Console.WriteLine("Tipo: " + sneaker.Tipo);
-                            Console.WriteLine("Valor Atual: " + sneaker.ValorAtual);
-                            Console.WriteLine("Valor Original: " + sneaker.ValorAnterior);
-                            Console.WriteLine("Desconto: " + sneaker.Desconto);
-                            Console.WriteLine("----------------------------------------------------------------");
+                            // Seleciona todas as divs filhas usando o XPath
+                            HtmlNodeCollection divsFilhas = divPaiNode.SelectNodes(divFilhaXPath);
+
+                            if (divsFilhas != null)
+                            {
+                                // Percorre todas as divs filhas encontradas
+                                foreach (HtmlNode divFilha in divsFilhas)
+                                {
+                                    string innerOutput = divFilha.InnerText;
+                                    string textoFormatado = innerOutput.Replace("\r", "").Replace("\n", "");
+                                    string textoFinal = Regex.Replace(textoFormatado, @"\s+", " ").Trim().Replace(".","").Replace("/ Skateboarding", "");
+
+                                    string[] partes = textoFinal.Split(new char[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+
+                                    // Verifica se a primeira palavra é "tênis"
+                                    if (partes.Length > 0 && partes[0].Equals("tênis", StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        // Remove a primeira palavra do array
+                                        partes = partes[1..];
+                                    }
+
+                                    string[] tiposTenis = {
+                                        "Tênis", "Casual", "Corrida", "Chuteiras", "Basquete",
+                                        "Treino & Academia", "Skateboarding", "Para Jogar Tênis"
+                                    };
+
+                                    // Encontrar o índice onde o tipo é um dos tipos disponíveis
+                                    int indexTipo = partes.Select((value, index) => new { Value = value, Index = index })
+                                                         .Where(x => tiposTenis.Contains(x.Value))
+                                                         .Select(x => x.Index)
+                                                         .DefaultIfEmpty(-1)
+                                                         .Min();
+
+                                    // Obter o nome do tênis
+                                    string nomeTenis = string.Join(" ", partes.Take(indexTipo));
+
+                                    // Remove o nome do tênis do array
+                                    partes = partes.Skip(indexTipo).ToArray();
+
+                                    SneakerDTO sneaker = new SneakerDTO();
+                                    if(partes.Length == 3)
+                                    {
+                                        sneaker.Nome = nomeTenis;
+                                        sneaker.Tipo = partes[0];
+                                        sneaker.ValorAtual = decimal.Parse(partes[2]);
+                                        sneaker.ValorAnterior = 0;
+                                        sneaker.Desconto = 0;
+                                        sneaker.DataHoraIntegracao = DateTime.Now;
+                                    }
+                                    else if(partes.Length >= 7)
+                                    {
+                                        sneaker.Nome = nomeTenis;
+                                        sneaker.Tipo = partes[0];
+                                        sneaker.ValorAtual = decimal.Parse(partes[2]);
+                                        sneaker.ValorAnterior = decimal.Parse(partes[4]);
+                                        sneaker.Desconto = int.Parse(partes[5].Replace("%",""));
+                                        sneaker.DataHoraIntegracao = DateTime.Now;
+                                    }
+
+                                    new SneakerFT().InserirOuAtualizar(sneaker, out mensagem);
+                                    _logger.LogInformation(mensagem);
+
+                                }
+                            }
+                            else
+                            {
+                                _logger.LogError("Nenhuma div filha encontrada dentro da div pai.");
+                            }
+
+                            // Deleta o arquivo
+                            Console.WriteLine("Arquivo lido com sucesso, executando exclusão.");
+                            Console.WriteLine(string.Format("ARQUIVO: {0}", arquivo));
+                            File.Delete(path);
                         }
-
-                        #region ok
-                        //// deu certo
-                        //HtmlNodeCollection teste = divFilha.SelectNodes(textoXPath);
-                        //if(teste != null)
-                        //{
-                        //    foreach(var x in teste)
-                        //    {
-                        //        // Imprime o conteúdo da tag <p>
-                        //        Console.WriteLine("Conteúdo da Tag <p>:");
-                        //        Console.WriteLine(x.InnerHtml);
-                        //        Console.WriteLine("-------------------------------------------");
-                        //    }
-                        //}
-                        #endregion
-
-                        #region ok2
-                        //HtmlNodeCollection tagsP = divFilha.SelectNodes(tagsPXPath);
-
-                        //if (tagsP != null)
-                        //{
-                        //    // Percorre todas as tags <p> encontradas
-                        //    foreach (HtmlNode tagP in tagsP)
-                        //    {
-                        //        // Extrai o conteúdo da tag <p>
-                        //        string tagPContent = tagP.InnerText;
-
-                        //        // Imprime o conteúdo da tag <p>
-                        //        Console.WriteLine("Conteúdo da Tag <p>:");
-                        //        Console.WriteLine(tagPContent);
-                        //        Console.WriteLine("-------------------------------------------");
-                        //    }
-                        //}
-                        //else
-                        //{
-                        //    Console.WriteLine("Nenhuma tag <p> encontrada dentro da segunda div filha.");
-                        //}
-                        #endregion
+                        else 
+                        {
+                            _logger.LogError("Div pai não encontrada no arquivo HTML.");
+                        }
                     }
                 }
-                else
-                {
-                    Console.WriteLine("Nenhuma div filha encontrada dentro da div pai.");
-                }
+
+                
             }
-            else
+            catch(Exception ex)
             {
-                Console.WriteLine("Div pai não encontrada no arquivo HTML.");
+                Console.WriteLine(ex.Message);
             }
+        }
+        static void Main(string[] args)
+        {
+            var host = Host.CreateDefaultBuilder(args)
+                .ConfigureLogging((hostingContext, logging) =>
+                {
+                    logging.ClearProviders(); 
+                    logging.AddConsole();       
+                })
+                .Build();
+
+            var logger = host.Services.GetRequiredService<ILogger<Program>>();
+
+            var program = new Program(logger);
+            program.Run();
         }
     }
 }
